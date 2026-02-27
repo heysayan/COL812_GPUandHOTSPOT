@@ -354,5 +354,121 @@ class TestHotSpotInterface(unittest.TestCase):
         self.assertEqual(sum(temps), 0.0)
 
 
+# ======================================================================
+# Real config file integration tests
+# ======================================================================
+REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
+CONFIG_DIR = os.path.join(REPO_ROOT, "config", "hotspot", "3Dmem_16core")
+
+
+@unittest.skipUnless(
+    os.path.isdir(CONFIG_DIR),
+    "HBM config directory not present",
+)
+class TestRealConfigFiles(unittest.TestCase):
+    """Validate pipeline integration with the real HBM config files."""
+
+    def test_config_files_exist(self):
+        """All expected config files should be present."""
+        cfg = PipelineConfig(output_dir=tempfile.mkdtemp())
+        self.assertTrue(os.path.isfile(cfg.hotspot_config_file),
+                        "mem_hotspot.config missing")
+        self.assertTrue(os.path.isfile(cfg.hotspot_layer_file),
+                        "mem.lcf missing")
+        self.assertTrue(os.path.isfile(cfg.init_file_external),
+                        "mem.init missing")
+
+    def test_floorplan_files_exist(self):
+        """All .flp files referenced by mem.lcf should exist."""
+        cfg = PipelineConfig(output_dir=tempfile.mkdtemp())
+        for name in [
+            "mem_ctrl.flp", "mem_tim.flp",
+            "mem_bank_1.flp", "mem_bank_2.flp", "mem_bank_3.flp",
+            "mem_bank_4.flp", "mem_bank_5.flp", "mem_bank_6.flp",
+            "mem_bank_7.flp", "mem_bank_8.flp",
+        ]:
+            path = os.path.join(cfg.hotspot_floorplan_folder, name)
+            self.assertTrue(os.path.isfile(path), "%s missing" % name)
+
+    def test_lcf_has_18_layers(self):
+        """The LCF file should define exactly 18 layers (0..17)."""
+        cfg = PipelineConfig(output_dir=tempfile.mkdtemp())
+        layer_numbers = []
+        with open(cfg.hotspot_layer_file) as fh:
+            for line in fh:
+                stripped = line.strip()
+                if stripped.isdigit():
+                    layer_numbers.append(int(stripped))
+        self.assertEqual(len(layer_numbers), cfg.NUM_HOTSPOT_LAYERS)
+        self.assertEqual(layer_numbers, list(range(18)))
+
+    def test_lcf_no_hardcoded_absolute_paths(self):
+        """The LCF should not contain hardcoded absolute paths."""
+        cfg = PipelineConfig(output_dir=tempfile.mkdtemp())
+        with open(cfg.hotspot_layer_file) as fh:
+            for lineno, line in enumerate(fh, 1):
+                if line.strip().endswith(".flp"):
+                    self.assertFalse(
+                        os.path.isabs(line.strip()),
+                        "Line %d has absolute path: %s" % (lineno, line.strip()),
+                    )
+
+    def test_prepare_lcf_creates_absolute_paths(self):
+        """prepare_lcf() should resolve relative paths to absolute."""
+        outdir = tempfile.mkdtemp()
+        cfg = PipelineConfig(output_dir=outdir)
+        cfg.prepare_lcf()
+        self.assertTrue(os.path.isfile(cfg.runtime_layer_file))
+
+        with open(cfg.runtime_layer_file) as fh:
+            for line in fh:
+                stripped = line.strip()
+                if stripped.endswith(".flp"):
+                    self.assertTrue(
+                        os.path.isabs(stripped),
+                        "Runtime LCF should have absolute path: %s" % stripped,
+                    )
+                    self.assertTrue(
+                        os.path.isfile(stripped),
+                        "Resolved floorplan not found: %s" % stripped,
+                    )
+
+    def test_bank_floorplan_has_16_banks(self):
+        """Each mem_bank_*.flp should define 16 banks (B_0..B_15)."""
+        cfg = PipelineConfig(output_dir=tempfile.mkdtemp())
+        flp_path = os.path.join(cfg.hotspot_floorplan_folder, "mem_bank_1.flp")
+        bank_names = []
+        with open(flp_path) as fh:
+            for line in fh:
+                if line.startswith("B_"):
+                    bank_names.append(line.split()[0])
+        self.assertEqual(len(bank_names), cfg.banks_per_layer)
+
+    def test_mem_ctrl_has_16_logic_cores(self):
+        """mem_ctrl.flp should define 16 logic cores (LC_0..LC_15)."""
+        cfg = PipelineConfig(output_dir=tempfile.mkdtemp())
+        flp_path = os.path.join(cfg.hotspot_floorplan_folder, "mem_ctrl.flp")
+        lc_names = []
+        with open(flp_path) as fh:
+            for line in fh:
+                if line.startswith("LC_"):
+                    lc_names.append(line.split()[0])
+        self.assertEqual(len(lc_names), cfg.NUM_LOGIC_CORES)
+
+    def test_setup_copies_init_file(self):
+        """HotSpotInterface.setup() should copy mem.init to output dir."""
+        outdir = tempfile.mkdtemp()
+        cfg = PipelineConfig(output_dir=outdir)
+        hs = HotSpotInterface(cfg)
+        hs.setup()
+        self.assertTrue(os.path.isfile(cfg.init_file))
+        # init file should be non-empty
+        self.assertGreater(os.path.getsize(cfg.init_file), 0)
+
+    def test_num_hotspot_layers_constant(self):
+        """NUM_HOTSPOT_LAYERS should be 18."""
+        self.assertEqual(PipelineConfig.NUM_HOTSPOT_LAYERS, 18)
+
+
 if __name__ == "__main__":
     unittest.main()

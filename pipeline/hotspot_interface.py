@@ -30,6 +30,9 @@ class HotSpotInterface:
         if os.path.isfile(cfg.init_file_external):
             shutil.copy2(cfg.init_file_external, cfg.init_file)
 
+        # Generate runtime LCF with absolute floorplan paths
+        cfg.prepare_lcf()
+
         header = self._ptrace_header()
         for path in (
             cfg.full_temperature_trace_file,
@@ -52,16 +55,23 @@ class HotSpotInterface:
         Parameters
         ----------
         voltage_per_layer : list[float] | None
-            Supply voltage for each of the 16 layers (logic + 8 bank layers
-            with TIM in between → 16 entries).  Defaults to all 1.1 V.
+            Supply voltage for each of the ``NUM_HOTSPOT_LAYERS`` layers
+            (3Dmem_16core has 18: mem_ctrl + TIM + 8×(bank + TIM)).
+            Defaults to all ``DEFAULT_VOLTAGE_V``.
         """
         cfg = self.cfg
+        num_layers = cfg.NUM_HOTSPOT_LAYERS
 
         if voltage_per_layer is None:
-            voltage_per_layer = [cfg.DEFAULT_VOLTAGE_V] * 16
+            voltage_per_layer = [cfg.DEFAULT_VOLTAGE_V] * num_layers
 
         voltage_str = ",".join("%.2f" % v for v in voltage_per_layer)
-        layer_flags = ",".join(["1"] * 16) + ","
+        layer_flags = ",".join(["1"] * num_layers) + ","
+
+        # Use the runtime LCF (with absolute paths) if it was prepared
+        layer_file = cfg.runtime_layer_file
+        if not os.path.isfile(layer_file):
+            layer_file = cfg.hotspot_layer_file
 
         cmd_parts = [
             cfg.hotspot_executable,
@@ -78,7 +88,7 @@ class HotSpotInterface:
             "-l", layer_flags,
             "-type", cfg.TYPE_OF_STACK,
             "-sampling_intvl", str(cfg.interval_sec),
-            "-grid_layer_file", cfg.hotspot_layer_file,
+            "-grid_layer_file", layer_file,
             "-detailed_3D", "on",
             "-v", voltage_str,
         ]
