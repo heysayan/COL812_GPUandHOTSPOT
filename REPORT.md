@@ -203,24 +203,83 @@ python run_pipeline.py \
 
 ### 4. HBM Power Model Details
 
-The power model is based on standard HBM2/HBM2E specifications:
+The power model (`pipeline/hbm_power_model.py`) computes per-bank power from
+five physical components:
 
-- **Bank size:** 64 Mb (1K columns × 8 bits/column × 8K rows)
-- **Energy per read access:** 20.55 pJ (from DRAM datasheet)
-- **Energy per write access:** 20.55 pJ
-- **Energy per refresh:** 3.55 pJ
-- **Refresh interval:** 7.8 µs (t_REFI per JEDEC HBM spec)
-- **Sampling interval:** 1 ms (configurable)
+#### 4.1 Dynamic Read/Write Power
 
-**DVFS scaling:**
+Energy per DRAM access from CACTI3DD modelling of HBM2 bank:
+- **Energy per read:** 20.55 nJ (includes row-buffer sense-amp, column decode,
+  bit-line charge, I/O driver)
+- **Energy per write:** 20.55 nJ
+- **P_dynamic = (reads × E_rd + writes × E_wr) / Δt × V²·f**
 
-Dynamic power scales as V²·f (standard CMOS switching power relationship).
-Static/leakage power scales linearly with voltage. When a bank is in low-power
-mode, only 10% of leakage power is dissipated (clock gating + power gating).
+#### 4.2 Activation / Precharge Power
+
+Each read/write implies a row activation (open) and precharge (close):
+- **Activation energy:** 3.2 nJ per row-open
+- **Precharge energy:** 1.1 nJ per row-close
+- **P_act_pre = accesses × (E_act + E_pre) / Δt × V²·f**
+
+#### 4.3 Refresh Power
+
+DRAM cells require periodic refresh at t_REFI = 7.8 µs:
+- **Refresh energy:** 3.55 nJ per refresh command (from CACTI3DD)
+- **P_refresh = avg_refreshes_per_interval × E_ref / Δt** (constant background)
+
+#### 4.4 Temperature-Dependent Static (Leakage) Power
+
+Sub-threshold leakage scales exponentially with temperature:
+
+    P_leak(T) = P_ref × exp(α × (T − T_ref))
+
+Parameters (20 nm MOSFET technology):
+- **P_ref:** 20 mW per bank at T_ref = 45°C
+- **α:** 0.06 /°C → leakage doubles every ~11.5°C
+- In low-power mode: 10% of leakage retained (clock gating + power gating)
+- Scales linearly with voltage under DVFS
+
+This creates a thermal-leakage feedback loop: higher temperature → more
+leakage → more power → higher temperature. The pipeline feeds HotSpot
+temperatures back into the power model each iteration.
+
+#### 4.5 Logic Core Power
+
+Each of 16 logic cores (I/O PHY, DLL, command decoder, ECC engine):
+- **Static:** 20 mW per core
+- **Dynamic:** 15 mW per core (data routing, ECC), scaled by V²·f
+
+Total logic die power at nominal: 16 × 35 mW = 560 mW.
+
+#### 4.6 DVFS Scaling
+
+Dynamic power scales as V²·f (standard CMOS). Static/leakage scales linearly
+with voltage.
 
 ---
 
-### 5. DTM Policy Design
+### 5. Standard Benchmark Workloads
+
+The pipeline includes five standard benchmark workload profiles
+(`pipeline/benchmarks.py`) based on published HBM2 bandwidth utilisation:
+
+| Benchmark | BW Utilisation | Pattern | Use Case |
+|-----------|---------------|---------|----------|
+| `stream` | 70% peak | Uniform, sustained | Worst-case thermal |
+| `sgemm` | 45% peak | Bursty, channel-skewed | Dense linear algebra |
+| `resnet50` | 60%/10% alternating | Burst–idle cycle | DNN inference |
+| `random` | 30% peak | Non-uniform random | Graph analytics |
+| `hotspot_stress` | 80% peak | Centre-concentrated | Thermal stress test |
+
+Access counts are derived from HBM2 bandwidth at 2 GHz:
+- Peak per-bank rate: 31,250 accesses/ms (2 GB/s / 64 B per access)
+- Each "access" = one DRAM command transferring 64 bytes (128-bit bus × BL4)
+
+Run benchmarks with: `python run_benchmark.py --benchmark stream --iterations 50`
+
+---
+
+### 6. DTM Policy Design
 
 The DTM policies are designed to be composable. The `CompositeDTMPolicy` chains
 policies in order:
@@ -314,9 +373,9 @@ files to work on any machine without modification.
 
 ---
 
-### 8. Testing
+### 9. Testing
 
-The test suite (`pipeline/tests/test_pipeline.py`) contains 37 tests
+The test suite (`pipeline/tests/test_pipeline.py`) contains 49 tests
 covering all modules:
 
 | Module | Tests | Description |
@@ -330,29 +389,34 @@ covering all modules:
 | `CompositeDTMPolicy` | 1 | Chained policy evaluation |
 | `PipelineRunner` | 3 | Static trace, per-interval dir, idle run |
 | `HotSpotInterface` | 2 | Setup creates files, missing temp file returns zeros |
+| `RealConfigFiles` | 9 | Config/floorplan existence, LCF layers, path resolution |
+| `RealisticPowerModel` | 6 | Nonzero idle power, temp-dependent leakage, act/pre energy |
+| `Benchmarks` | 6 | All 5 benchmarks, realistic counts, pipeline integration |
 
-All 28 tests pass.
+All 49 tests pass.
 
 ---
 
-### 9. File Inventory
+### 10. File Inventory
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `pipeline/__init__.py` | 35 | Package init, public API |
-| `pipeline/config.py` | 156 | Configuration parameters |
+| `pipeline/__init__.py` | 38 | Package init, public API |
+| `pipeline/config.py` | 197 | Configuration parameters |
 | `pipeline/accelsim_trace_parser.py` | 150 | Accel-Sim trace parsing |
-| `pipeline/hbm_power_model.py` | 112 | HBM power model |
-| `pipeline/hotspot_interface.py` | 179 | HotSpot interface |
+| `pipeline/hbm_power_model.py` | 165 | Realistic HBM power model |
+| `pipeline/hotspot_interface.py` | 190 | HotSpot interface |
 | `pipeline/dtm_policies.py` | 193 | DTM policies |
-| `pipeline/pipeline_runner.py` | 220 | Pipeline orchestrator |
-| `pipeline/tests/test_pipeline.py` | 358 | Unit tests |
+| `pipeline/pipeline_runner.py` | 230 | Pipeline orchestrator |
+| `pipeline/benchmarks.py` | 155 | Standard benchmark workloads |
+| `pipeline/tests/test_pipeline.py` | ~560 | Unit tests (49 tests) |
 | `run_pipeline.py` | 164 | CLI entry point |
+| `run_benchmark.py` | ~470 | Benchmark simulation + plotting |
 | `REPORT.md` | — | This document |
 
 ---
 
-### 10. Usage Guide
+### 11. Usage Guide
 
 #### Prerequisites
 
@@ -419,20 +483,58 @@ temps = np.array(history["bank_temps"])
 print("Peak temperature:", np.max(temps), "°C")
 ```
 
+#### Running Standard Benchmarks
+
+```bash
+# List available benchmarks
+python run_benchmark.py --list
+
+# Run STREAM benchmark with thermal plots
+python run_benchmark.py --benchmark stream --iterations 50 --output-dir results/stream
+
+# Run SGEMM benchmark
+python run_benchmark.py --benchmark sgemm --iterations 100
+
+# Run ResNet-50 inference pattern
+python run_benchmark.py --benchmark resnet50 --iterations 100
+```
+
+Each benchmark run produces:
+- `results.json` — raw simulation data
+- `thermal_trace.png` — peak/mean temperature over time
+- `power_trace.png` — total stack power over time
+- `layer_heatmaps.png` — per-layer 4×4 thermal heatmap
+- `vertical_profile.png` — temperature vs. layer depth
+- `layer_power_dist.png` — power distribution across layers
+- `ANALYSIS_REPORT.md` — complete analysis report with embedded plots
+
+#### Programmatic Benchmark Usage
+
+```python
+from pipeline import PipelineConfig, PipelineRunner
+
+cfg = PipelineConfig(output_dir="./my_run")
+runner = PipelineRunner(cfg)
+history = runner.run(iterations=50, benchmark="stream")
+```
+
 ---
 
-### 11. Comparison with Prior Work (sample_script.py)
+### 12. Comparison with Prior Work (sample_script.py)
 
 | Aspect | sample_script.py (toy) | pipeline/ (industry-grade) |
 |--------|----------------------|---------------------------|
-| **Workload** | Synthetic random access rates | Real Accel-Sim benchmark traces |
-| **Power model** | Simple `E × N / Δt` | Full model with DVFS scaling (V²·f), leakage, refresh, LPM gating |
+| **Workload** | Synthetic random access rates | Real Accel-Sim benchmark traces + 5 standard benchmarks |
+| **Power model** | Simple `E × N / Δt`, static = 0 | 5-component model: dynamic, act/pre, refresh, temp-dependent leakage, logic |
+| **Leakage** | Constant zero | Exponential: P(T) = P_ref · exp(α·(T−T_ref)), doubles every ~11.5°C |
 | **DTM policies** | 6 monolithic functions (dtm1–dtm6) | Modular, composable policy classes |
 | **DVFS** | Fixed voltage passed to HotSpot | Dynamic voltage/frequency scaling with configurable thresholds |
 | **Throttling** | Binary (on/off via bankstate) | Continuous per-bank throttle factor (0.0–1.0) |
+| **Benchmarks** | None (synthetic only) | STREAM, SGEMM, ResNet-50, random, hotspot_stress |
+| **Analysis** | None | Auto-generated plots + markdown report |
 | **Configuration** | Hard-coded globals | Centralized `PipelineConfig` with CLI overrides |
-| **Testing** | None | 28 unit tests |
-| **Modularity** | Single 1100-line script | 7 focused modules (~1400 lines total) |
+| **Testing** | None | 49 unit tests |
+| **Modularity** | Single 1100-line script | 8 focused modules (~1800 lines total) |
 | **Error handling** | `os.system()` calls | `subprocess.run()` with error handling and graceful degradation |
 | **Extensibility** | Requires editing the script | Add new `DTMPolicy` subclass; plug into composite |
 

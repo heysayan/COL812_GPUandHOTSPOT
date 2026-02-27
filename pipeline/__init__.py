@@ -20,6 +20,7 @@ from .dtm_policies import (
     CompositeDTMPolicy,
 )
 from .pipeline_runner import PipelineRunner
+from .benchmarks import BENCHMARKS, list_benchmarks, get_benchmark
 
 __all__ = [
     "PipelineConfig",
@@ -32,4 +33,7 @@ __all__ = [
     "LowPowerModePolicy",
     "CompositeDTMPolicy",
     "PipelineRunner",
+    "BENCHMARKS",
+    "list_benchmarks",
+    "get_benchmark",
 ]

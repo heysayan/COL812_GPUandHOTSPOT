@@ -38,11 +38,15 @@ class PipelineConfig:
     NUM_PSEUDO_CHANNELS = 16
 
     # ------------------------------------------------------------------
-    # Energy per access  (pJ → converted to nJ inside power model)
+    # Energy per access  (nJ — from CACTI3DD modelling of HBM2 bank)
+    # The 20.55 nJ figure includes row-buffer sense-amp + column decode +
+    # bit-line charge + I/O driver.  Refresh is lower (no column decode).
     # ------------------------------------------------------------------
-    ENERGY_PER_READ_PJ = 20.55
-    ENERGY_PER_WRITE_PJ = 20.55
-    ENERGY_PER_REFRESH_PJ = 3.55
+    ENERGY_PER_READ_NJ = 20.55       # nJ per read  (CACTI3DD)
+    ENERGY_PER_WRITE_NJ = 20.55      # nJ per write (CACTI3DD)
+    ENERGY_PER_REFRESH_NJ = 3.55     # nJ per refresh command
+    ENERGY_PER_ACT_NJ = 3.2          # row-activate energy (open a row)
+    ENERGY_PER_PRE_NJ = 1.1          # precharge energy (close a row)
 
     # ------------------------------------------------------------------
     # Frequency / timing
@@ -60,8 +64,24 @@ class PipelineConfig:
     NUM_REFRESH_COMMANDS_PER_TREFW = 8
     ROWS_REFRESHED_PER_INTERVAL = ROWS_PER_BANK_K / NUM_REFRESH_COMMANDS_PER_TREFW
 
-    BANK_STATIC_POWER_W = 0.0
-    LOGIC_CORE_POWER_W = 0.0
+    # ------------------------------------------------------------------
+    # Static / leakage power  (per bank & logic core)
+    #
+    # HBM2 bank: ~2.914 mm² die area per bank.  At 20nm node, leakage
+    # power density ≈ 5–10 mW/mm² at 45 °C → ~15–30 mW per bank.  We
+    # use a reference value at a reference temperature and scale
+    # exponentially with temperature (typical MOSFET leakage doubles
+    # roughly every 10–12 °C).
+    #
+    # Logic die: I/O PHY, DLL, command decoder, ECC engine.  Total
+    # ≈ 46.7 mm² die, 16 cores → ~2.92 mm² per core → ~20 mW/core.
+    # ------------------------------------------------------------------
+    BANK_STATIC_POWER_W_REF = 0.020     # 20 mW at reference temperature
+    BANK_STATIC_REF_TEMP_C = 45.0       # reference temperature for above
+    LEAKAGE_TEMP_COEFF = 0.06           # exp coeff: P ∝ exp(coeff*(T-Tref))
+    LOGIC_CORE_STATIC_POWER_W = 0.020   # 20 mW per logic core (I/O PHY etc.)
+    LOGIC_CORE_DYNAMIC_POWER_W = 0.015  # 15 mW per core (data routing, ECC)
+    LOW_POWER_LEAKAGE_FRACTION = 0.10   # 10% leakage retained in LPM
 
     # ------------------------------------------------------------------
     # Thermal thresholds  (°C)

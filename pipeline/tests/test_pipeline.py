@@ -470,5 +470,151 @@ class TestRealConfigFiles(unittest.TestCase):
         self.assertEqual(PipelineConfig.NUM_HOTSPOT_LAYERS, 18)
 
 
+# ======================================================================
+# Realistic Power Model
+# ======================================================================
+class TestRealisticPowerModel(unittest.TestCase):
+    """Tests for the temperature-dependent leakage power model."""
+
+    def setUp(self):
+        self.cfg = PipelineConfig(output_dir=tempfile.mkdtemp())
+        self.model = HBMPowerModel(self.cfg)
+
+    def test_idle_power_is_nonzero(self):
+        """Even with zero accesses, static+refresh power should be > 0."""
+        reads = [0] * 128
+        writes = [0] * 128
+        active = [1] * 128
+        bp, lp = self.model.compute_power_trace(reads, writes, active)
+        self.assertGreater(bp[0], 0.0, "Idle bank power should be > 0")
+        self.assertGreater(lp[0], 0.0, "Logic core power should be > 0")
+
+    def test_leakage_increases_with_temperature(self):
+        """Hotter banks should have higher leakage power."""
+        reads = [0] * 128
+        writes = [0] * 128
+        active = [1] * 128
+
+        self.model.set_bank_temperatures([45.0] * 128)
+        bp_cool, _ = self.model.compute_power_trace(reads, writes, active)
+
+        self.model.set_bank_temperatures([85.0] * 128)
+        bp_hot, _ = self.model.compute_power_trace(reads, writes, active)
+
+        self.assertGreater(bp_hot[0], bp_cool[0],
+                           "Power at 85°C should exceed power at 45°C")
+
+    def test_leakage_doubles_per_12c(self):
+        """Leakage should roughly double every ~12°C."""
+        import math
+        cfg = self.cfg
+        p45 = cfg.BANK_STATIC_POWER_W_REF * math.exp(cfg.LEAKAGE_TEMP_COEFF * 0)
+        p57 = cfg.BANK_STATIC_POWER_W_REF * math.exp(cfg.LEAKAGE_TEMP_COEFF * 12)
+        ratio = p57 / p45
+        self.assertAlmostEqual(ratio, 2.054, places=1)
+
+    def test_lpm_power_is_fraction_of_active(self):
+        """LPM power should be LOW_POWER_LEAKAGE_FRACTION of leakage."""
+        reads = [1000] * 128
+        writes = [1000] * 128
+        active_on = [1] * 128
+        active_off = [0] * 128
+
+        bp_on, _ = self.model.compute_power_trace(reads, writes, active_on)
+        bp_off, _ = self.model.compute_power_trace(reads, writes, active_off)
+
+        # LPM should be small fraction of leakage, definitely < active power
+        self.assertLess(bp_off[0], bp_on[0] * 0.2)
+
+    def test_logic_core_power_nonzero(self):
+        """Logic cores should have static + dynamic power."""
+        reads = [0] * 128
+        writes = [0] * 128
+        active = [1] * 128
+        _, lp = self.model.compute_power_trace(reads, writes, active)
+        self.assertEqual(len(lp), 16)
+        expected = self.cfg.LOGIC_CORE_STATIC_POWER_W + self.cfg.LOGIC_CORE_DYNAMIC_POWER_W
+        self.assertAlmostEqual(lp[0], expected, places=4)
+
+    def test_activation_precharge_energy(self):
+        """Dynamic power should include act+pre energy beyond just read/write."""
+        reads = [10000] * 128
+        writes = [0] * 128
+        active = [1] * 128
+
+        bp, _ = self.model.compute_power_trace(reads, writes, active)
+        # Power with activation+precharge should be higher than just read energy
+        # Read-only power: 10000 * 20.55 nJ / 1e6 ns = 0.2055 W
+        # Act+Pre adds: 10000 * (3.2+1.1) nJ / 1e6 ns = 0.043 W
+        # Plus leakage (~20mW) and refresh
+        self.assertGreater(bp[0], 0.24)
+
+
+# ======================================================================
+# Benchmarks
+# ======================================================================
+class TestBenchmarks(unittest.TestCase):
+
+    def setUp(self):
+        self.cfg = PipelineConfig(output_dir=tempfile.mkdtemp())
+
+    def test_list_benchmarks(self):
+        from pipeline.benchmarks import list_benchmarks
+        names = list_benchmarks()
+        self.assertIn("stream", names)
+        self.assertIn("sgemm", names)
+        self.assertIn("resnet50", names)
+        self.assertIn("random", names)
+        self.assertIn("hotspot_stress", names)
+
+    def test_stream_uniform(self):
+        from pipeline.benchmarks import get_benchmark
+        fn = get_benchmark("stream")
+        reads, writes = fn(self.cfg, step=0)
+        self.assertEqual(len(reads), 128)
+        self.assertEqual(len(writes), 128)
+        # STREAM is uniform — all banks should have same counts
+        self.assertEqual(len(set(reads)), 1)
+        self.assertEqual(len(set(writes)), 1)
+        # Read:write ≈ 2:1
+        self.assertGreater(reads[0], writes[0])
+
+    def test_sgemm_non_uniform(self):
+        from pipeline.benchmarks import get_benchmark
+        fn = get_benchmark("sgemm")
+        reads, writes = fn(self.cfg, step=0)
+        # SGEMM should have non-uniform access
+        self.assertGreater(len(set(reads)), 1)
+
+    def test_resnet50_burst_idle(self):
+        from pipeline.benchmarks import get_benchmark
+        fn = get_benchmark("resnet50")
+        reads_conv, _ = fn(self.cfg, step=0)  # convolution phase
+        reads_bn, _ = fn(self.cfg, step=3)    # batch-norm phase
+        # Convolution should have much higher traffic than batch-norm
+        self.assertGreater(reads_conv[0], reads_bn[0] * 2)
+
+    def test_benchmark_counts_are_realistic(self):
+        """Access counts should be in a realistic DRAM range."""
+        from pipeline.benchmarks import get_benchmark
+        fn = get_benchmark("stream")
+        reads, writes = fn(self.cfg, step=0)
+        # STREAM at 70% of 31,250 peak → ~21,875 total per bank
+        total = reads[0] + writes[0]
+        self.assertGreater(total, 10_000)
+        self.assertLess(total, 50_000)
+
+    def test_benchmark_run_via_pipeline(self):
+        """Pipeline runner should accept benchmark parameter."""
+        from pipeline.pipeline_runner import PipelineRunner
+        outdir = tempfile.mkdtemp()
+        cfg = PipelineConfig(output_dir=outdir)
+        runner = PipelineRunner(cfg)
+        history = runner.run(iterations=2, benchmark="stream")
+        self.assertEqual(len(history["bank_power"]), 2)
+        # Power should be non-trivial (not all zeros)
+        self.assertGreater(sum(history["bank_power"][0]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

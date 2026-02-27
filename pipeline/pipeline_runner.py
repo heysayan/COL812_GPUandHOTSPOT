@@ -76,6 +76,7 @@ class PipelineRunner:
         trace_source=None,
         accelsim_cmd=None,
         per_interval_trace_dir=None,
+        benchmark=None,
     ):
         """
         Execute the closed-loop pipeline.
@@ -93,6 +94,9 @@ class PipelineRunner:
         per_interval_trace_dir : str | None
             Directory containing per-interval trace files named
             ``interval_<N>.txt`` (read / write counts per bank).
+        benchmark : str | callable | None
+            Either a registered benchmark name (e.g. ``"stream"``) or a
+            callable ``fn(cfg, step) -> (reads, writes)``.
         """
         log.info("Pipeline starting for %d iterations", iterations)
         self.hotspot.setup()
@@ -102,7 +106,8 @@ class PipelineRunner:
 
             # ---- Stage 1: obtain access trace ----------------------------
             reads, writes = self._get_access_trace(
-                step, trace_source, accelsim_cmd, per_interval_trace_dir
+                step, trace_source, accelsim_cmd, per_interval_trace_dir,
+                benchmark,
             )
 
             # Apply throttle factors from previous DTM action
@@ -131,6 +136,9 @@ class PipelineRunner:
 
             bank_temps = self.hotspot.get_bank_temperatures()
 
+            # Feed temperatures back to power model for leakage loop
+            self.power_model.set_bank_temperatures(bank_temps)
+
             # ---- Stage 4: DTM policy -------------------------------------
             action = self.dtm_policy.evaluate(bank_temps)
             self._apply_action(action)
@@ -155,8 +163,17 @@ class PipelineRunner:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-    def _get_access_trace(self, step, trace_source, accelsim_cmd, per_interval_dir):
+    def _get_access_trace(self, step, trace_source, accelsim_cmd, per_interval_dir,
+                          benchmark=None):
         """Return (reads, writes) for the current interval."""
+        # Option 0: benchmark workload
+        if benchmark is not None:
+            if callable(benchmark):
+                return benchmark(self.cfg, step)
+            from .benchmarks import get_benchmark
+            fn = get_benchmark(benchmark)
+            return fn(self.cfg, step)
+
         # Option A: per-interval files
         if per_interval_dir:
             path = os.path.join(per_interval_dir, "interval_%d.txt" % step)
