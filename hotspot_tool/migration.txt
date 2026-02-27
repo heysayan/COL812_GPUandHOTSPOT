@@ -1,0 +1,9 @@
+Time: 89, Channel: 1, Candidate: 7
+Time: 95, Channel: 0, Candidate: 7
+Time: 111, Channel: 2, Candidate: 6
+Time: 118, Channel: 3, Candidate: 6
+Time: 119, Channel: 3, Candidate: 6
+Time: 119, Channel: 7, Candidate: 6
+Time: 153, Channel: 1, Candidate: 7
+Time: 154, Channel: 3, Candidate: 6
+Time: 155, Channel: 3, Candidate: 6

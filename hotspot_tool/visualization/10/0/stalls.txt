@@ -1,0 +1,2 @@
+Stall count: 0
+Stalls: 
