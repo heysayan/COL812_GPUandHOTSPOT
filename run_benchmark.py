@@ -52,7 +52,7 @@ class SimpleThermalModel:
     def __init__(self, cfg):
         self.cfg = cfg
         n = cfg.NUM_BANKS
-        self.ambient_c = 45.0  # from mem_hotspot.config: 318.15 K
+        self.ambient_c = 45.0  # from mem_hotspot.config: -ambient 318.15 K = 45.0 °C
         # Thermal resistance: derived from HotSpot package params
         # R_conv = 0.1 K/W (from config).  Spread across 128 banks → ~12.8 K/W
         self.r_th = 12.8  # K/W per bank
@@ -315,7 +315,7 @@ def generate_report(results, plots, output_dir):
         f"| Peak bank temperature | {peak:.2f} °C |",
         f"| Mean bank temperature (final) | {mean_final:.2f} °C |",
         f"| Total stack power (final) | {total_pwr:.3f} W |",
-        f"| Steady-state reached | {'~Yes' if abs(results['peak_temps'][-1] - results['peak_temps'][-2]) < 0.01 else 'No'} |",
+        f"| Steady-state reached | {'~Yes' if iterations >= 2 and abs(results['peak_temps'][-1] - results['peak_temps'][-2]) < 0.01 else 'No'} |",
         "",
         "## 3. Temperature Evolution",
         "",
@@ -352,10 +352,11 @@ def generate_report(results, plots, output_dir):
         "",
         f"![Layer Power](layer_power_dist.png)",
         "",
-        "Total power dissipated in each DRAM layer. The distribution is uniform",
-        f"for the {benchmark} workload because access counts are evenly spread"
-        " across banks." if benchmark in ("stream", "random") else
-        f"for the {benchmark} workload, reflecting the non-uniform access pattern.",
+        "Total power dissipated in each DRAM layer.",
+        f"For the {benchmark} workload the distribution is uniform because access"
+        " counts are evenly spread across banks." if benchmark in ("stream", "random") else
+        f"For the {benchmark} workload the distribution reflects the non-uniform"
+        " access pattern.",
         "",
         "## 8. Power Model Details",
         "",
