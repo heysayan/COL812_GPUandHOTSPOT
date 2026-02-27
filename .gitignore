@@ -16,3 +16,7 @@ compile_commands.json
 .cache
 .cursorrules
 CLAUDE.md
+pipeline_output/
+__pycache__/
+*.pyc
+.pytest_cache/
