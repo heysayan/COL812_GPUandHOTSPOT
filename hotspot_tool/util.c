@@ -12,6 +12,12 @@
 
 #include "util.h"
 
+/* Global variable definitions (declared extern in util.h) */
+char leakage_vector[257];
+unsigned int leakage[128];
+char volt_vector[385];
+unsigned int volt[128];
+
 #define SWAP(a,b) {temp=(a); (a)=(b); (b)=temp;}
 
 int eq(double x, double y)

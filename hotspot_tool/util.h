@@ -148,13 +148,13 @@ int coo2csc(int size, int nnz,
 int c2c_cmp( const void *a , const void *b);
 
 // For 128 channels
-char leakage_vector[257];
-unsigned int leakage[128];
+extern char leakage_vector[257];
+extern unsigned int leakage[128];
 
 
 // For 128 channels
-char volt_vector[385];
-unsigned int volt[128];
+extern char volt_vector[385];
+extern unsigned int volt[128];
 
 void gaussj(double **a, int n, double *b);
 
