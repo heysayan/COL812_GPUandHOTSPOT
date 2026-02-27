@@ -20,3 +20,14 @@ pipeline_output/
 __pycache__/
 *.pyc
 .pytest_cache/
+hotspot_tool/*.o
+hotspot_tool/*.a
+hotspot_tool/hotspot
+hotspot_tool/hotfloorplan
+# HotSpot intermediate output files in results directories
+results/*/*.trace
+results/*/*.init
+results/*/*.log
+results/*/tmmpFile_power2
+results/*/BankStateData.txt
+results/*/mem.lcf

@@ -42,6 +42,13 @@ class HotSpotInterface:
             with open(path, "w") as fh:
                 fh.write(header + "\n")
 
+        # Create initial BankStateData.txt (all banks active) — HotSpot
+        # reads this from the current working directory.
+        bpl = cfg.NUM_BANKS // cfg.BANKS_IN_Z
+        with open(cfg.bank_state_file, "w") as fh:
+            for i in range(0, cfg.NUM_BANKS, bpl):
+                fh.write(" ".join(["1"] * bpl) + "\n")
+
         self._iteration = 0
 
     # ------------------------------------------------------------------
@@ -98,7 +105,8 @@ class HotSpotInterface:
             cmd_parts += ["-init_file", cfg.init_file]
 
         try:
-            subprocess.run(cmd_parts, check=True, capture_output=True, text=True)
+            subprocess.run(cmd_parts, check=True, capture_output=True, text=True,
+                           cwd=self.cfg.output_dir)
         except FileNotFoundError:
             # HotSpot binary not built — allow graceful degradation for testing
             return False

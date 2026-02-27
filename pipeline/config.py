@@ -142,7 +142,7 @@ class PipelineConfig:
 
         self.accelsim_trace_dir = accelsim_trace_dir or os.path.join(repo_root, "traces")
 
-        self.output_dir = output_dir or os.path.join(repo_root, "pipeline_output")
+        self.output_dir = os.path.abspath(output_dir or os.path.join(repo_root, "pipeline_output"))
         os.makedirs(self.output_dir, exist_ok=True)
 
         # Output file names (inside output_dir)
